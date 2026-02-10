@@ -13,7 +13,7 @@ Tygent reshapes unstructured LLM agent plans into structured execution blueprint
 - **Adaptive workflows** – mutate the structured plan at runtime with `AdaptiveExecutor` rewrite rules for fallbacks, conditional branches, or resource-aware tuning.
 - **Multi-agent runtime** – coordinate independent agents through `MultiAgentManager` and a shared `CommunicationBus` while preserving structured plan metadata.
 - **Framework patches** – call `tygent.install()` to enable runtime helpers for integrations in `tygent.integrations.*`.
-- **Planner adapters** – convert Claude Code, Gemini CLI, and OpenAI Codex planning payloads into scheduler-ready service plans via `tygent.integrations.{claude_code, gemini_cli, openai_codex}`.
+- **Planner adapters** – convert Claude Code, Claude Code CLI, Gemini CLI, and OpenAI Codex planning payloads into scheduler-ready service plans via `tygent.integrations.{claude_code, claude_code_cli, gemini_cli, openai_codex}`.
 - **Service bridge + CLI** – the `tyapi` package ships an aiohttp service and CLI that convert third-party plans into the structured format, surface prefetch hints, and benchmark sequential vs accelerated runs.
 
 ## Coding-agent integrations
@@ -22,6 +22,7 @@ The `tygent.integrations` package includes adapters that turn coding-assistant p
 
 - `GeminiCLIPlanAdapter` (`tygent.integrations.gemini_cli`) for Google Gemini CLI plans.
 - `ClaudeCodePlanAdapter` (`tygent.integrations.claude_code`) for Anthropic Claude Code traces.
+- `ClaudeCodeCLIPlanAdapter` (`tygent.integrations.claude_code_cli`) for Anthropic Claude Code CLI plans.
 - `OpenAICodexPlanAdapter` (`tygent.integrations.openai_codex`) for legacy OpenAI Codex workflows.
 
 ```python
@@ -284,8 +285,8 @@ Run `examples/langgraph_fsd_example.py` to see the loop, reviewer checkpoints, a
 ## Planner adapters
 
 Tygent can ingest planning payloads from popular IDE assistants out of the box.
-The adapters in `tygent.integrations.{claude_code, gemini_cli, openai_codex}`
-turn the structures that Claude Code, Gemini CLI, and OpenAI Codex emit into
+The adapters in `tygent.integrations.{claude_code, claude_code_cli, gemini_cli, openai_codex}`
+turn the structures that Claude Code, Claude Code CLI, Gemini CLI, and OpenAI Codex emit into
 `ServicePlan` objects that the scheduler can execute immediately.
 
 ```python
