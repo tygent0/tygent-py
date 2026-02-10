@@ -1,0 +1,139 @@
+Tygent Python — Full LLM Orientation
+===================================
+
+Overview
+--------
+Tygent reshapes loosely structured agent plans into typed execution graphs so downstream schedulers, services, and IDE tooling can reason about dependencies, critical paths, and prefetch hints. The repository bundles the Python runtime (`tygent/`), a service bridge + CLI (`tyapi/`), runnable examples, automated tests, and helper extensions for VS Code and Cursor. Highlights include:
+- `parse_plan`/`parse_plans` convert plan dictionaries into DAG objects with a critical-step list.
+- `Scheduler` executes DAGs asynchronously with hook callbacks, priority nodes, and token/latency budgeting controls.
+- `accelerate` wraps callables, adapters, and plan dictionaries to supply Tygent scheduling with minimal glue.
+- `AdaptiveExecutor` and `MultiAgentManager` provide higher-level orchestration (fallbacks, conditional branches, multi-agent messaging).
+- `ServicePlanBuilder` turns HTTP payloads into runnable plans and surfaces prefetch hints.
+
+Repository Layout
+-----------------
+```
+README.md                    Project summary and feature tour
+pyproject.toml               Packaging, dependency, and tool configuration
+llms.txt / llms-full.txt     Single-file LLM references (you are here)
+tygent/                      Core runtime
+  __init__.py                Public API surface
+  accelerate.py              Drop-in wrappers for functions and frameworks
+  adaptive_executor.py       Rewrite rules + adaptive execution loop
+  audit.py                   Helpers for auditing DAGs and plans
+  dag.py                     DAG structure + critical path computation
+  nodes.py                   BaseNode/Node/LLMNode/ToolNode definitions
+  plan_parser.py             Dictionaries ➜ DAG conversion
+  scheduler.py               Async executor with hooks and budgets
+  prefetch.py                Stub prefetch implementation
+  multi_agent.py             CommunicationBus + MultiAgentManager
+  service_bridge.py          Service plan builder + runtime registry
+  integrations/              Framework adapters (Claude Code, Gemini CLI, OpenAI Codex, Google ADK, etc.)
+tyapi/                       SaaS-style service bridge
+  README.md                  HTTP + CLI instructions
+  service/                   aiohttp app, CLI commands, state management, ingestors
+  frontend/                  Lightweight console served by the CLI
+examples/                    Runnable demos for DAGs, adaptive execution, integrations
+cursor-extension/            Cursor IDE helper
+vscode-extension/            VS Code helper
+scripts/                     Utility scripts (formatting, release helpers)
+tests/                       Pytest suites for runtime + service behaviour
+```
+
+Environment & Tooling
+---------------------
+- **Python compatibility**: >=3.8 (see `pyproject.toml`).
+- **Install runtime + dev extras**: `pip install -e .[dev]` installs the core library, tyapi dependencies, pytest, black, and isort.
+- **Formatting**: Black (line length 88) + isort (Black profile). Run `black .` then `isort .` before committing Python changes.
+- **Testing**: Default suite via `pytest -q`. Targeted commands include `pytest tests/test_dag.py -q`, `pytest tests/test_scheduler.py -q` (if added), and `pytest tyapi/tests -q` for the service bridge. Async flows rely on `pytest-asyncio` (configured in `pytest.ini`).
+- **Environment variables**: `TYGENT_SERVICE_STATE` overrides the default JSON file path for tyapi account data; provider SDKs look for their own credentials (OpenAI, Google Generative AI, etc.).
+
+Core Runtime Concepts
+---------------------
+1. **Plans ➜ DAGs** (`tygent/plan_parser.py`)
+   - Plan dictionaries contain `steps` with `name`, `func`, `dependencies`, optional `critical`, `token_cost`, and metadata fields.
+   - `parse_plan` returns `(DAG, critical_nodes)`; `parse_plans` merges multiple dictionaries while enforcing unique node names and carrying edge metadata.
+   - Tests (`tests/test_plan_parser.py`) ensure dependency wiring, token costs, and duplicate detection behave deterministically.
+
+2. **Nodes & Graphs** (`tygent/dag.py`, `tygent/nodes.py`)
+   - `DAG` stores `nodes`, adjacency `edges`, and optional `edge_mappings`. Methods like `add_node`, `add_edge`, `get_topological_order`, `compute_critical_path`, and `copy` underpin scheduling and tests.
+   - `Node` captures `token_cost`, latency estimates/models, and arbitrary metadata. `ToolNode` wraps synchronous or async callables. `LLMNode` adds prompt/model metadata with default latency heuristics.
+
+3. **Execution** (`tygent/scheduler.py`)
+   - `Scheduler` consumes a `DAG` and executes nodes respecting dependencies. Hooks (`before_node`, `after_node`, `on_error`) offer instrumentation (validated in `tests/test_hooks.py`).
+   - Priority handling (`Scheduler.priority_nodes`) elevates critical steps (populated from `parse_plan`). Token and concurrency budgeting utilities help keep runtimes bounded.
+   - Errors raise `StopExecution` for controlled halts.
+
+4. **Prefetching** (`tygent/prefetch.py`)
+   - `prefetch_many` currently simulates asynchronous fetching with `asyncio.sleep(0)` and marks URLs as "prefetched". Swap with a production HTTP cache when integrating with real services.
+
+Acceleration & Integrations
+---------------------------
+- **`accelerate` decorator/wrapper** (`tygent/accelerate.py`)
+  - Works on plain functions, async functions, plan dictionaries, and framework objects. When given a dict with `steps`, it builds a scheduler-backed executor. When wrapping frameworks (LangChain, Google ADK, OpenAI Assistants, LlamaIndex), it inspects attributes such as `.plan`, `.workflow`, or `.run_async` to attach Tygent scheduling.
+  - Optional integrations auto-patch SDKs (see `tygent/integrations/`). Guard imports and degrade gracefully when extras are missing.
+- **`tygent.install()`** (`tygent/patch.py`) applies integration patches globally (extensions call this when the user runs “Enable Agent”).
+- **Adapter packages** (`tygent/integrations/*.py`) translate external planning payloads into Tygent service plans. Tests under `tests/integrations/` validate conversions.
+
+Adaptive Execution & Multi-Agent Orchestration
+----------------------------------------------
+- **AdaptiveExecutor** (`tygent/adaptive_executor.py`)
+  - Wraps a base `DAG` and a list of `RewriteRule` objects. Rules can insert new nodes, replace functions, or redirect edges in response to execution state (e.g., fallback when a node errors, branch based on outputs, or adjust for resource limits).
+  - Helper factories: `create_fallback_rule`, `create_conditional_branch_rule`, `create_resource_adaptation_rule` generate common patterns. See `tests/test_adaptive_executor.py` for behaviour.
+- **MultiAgentManager** (`tygent/multi_agent.py`)
+  - Manages named agent instances, dispatching `execute` calls concurrently. `CommunicationBus` enables message passing when agents opt in; `Message` structures those payloads. Covered in `tests/test_multi_agent.py`.
+
+Service Bridge (`tygent/service_bridge.py`)
+------------------------------------------
+- **ServicePlanBuilder** converts HTTP payloads (e.g., from tyapi) into executable plan dictionaries, merging metadata, tags, token estimates, and link lists.
+- **LLMRuntimeRegistry** lets you register async prompt handlers per provider (`DEFAULT_LLM_RUNTIME` pre-registers an `"echo"` handler). Builder-generated steps call the appropriate runtime or emit echo payloads for non-LLM steps.
+- Prefetch links are deduplicated and returned alongside the plan. When execution runs through `_PlanExecutor`, prefetched resources are injected into inputs.
+
+TyAPI Service
+-------------
+- **CLI** (`python -m tyapi.service.cli`)
+  - Commands: `register`, `configure-ingestor`, `generate-key`, `serve`, `catalog`, `list-accounts`, etc. Metadata persists to `tyapi/service_state.json` unless `TYGENT_SERVICE_STATE` overrides the path.
+  - Example provisioning flow: register ➜ configure ingestor ➜ generate key ➜ `serve --port 8080`.
+- **HTTP endpoints** (`tyapi/service/app.py` + routers)
+  - `POST /v1/accounts/register` – create an account + API key.
+  - `GET /v1/accounts` – list tenants.
+  - `POST /v1/accounts/<id>/keys` – mint additional keys.
+  - `GET /v1/catalog` – enumerate ingestors.
+  - `POST /v1/plan/convert` – transform framework plans into Tygent service plans with prefetch hints.
+  - `POST /v1/plan/benchmark` – run sequential vs accelerated executions (leveraging `tygent.service_bridge.execute_service_plan`).
+- **Frontend** (`tyapi/frontend/`)
+  - Served by the CLI for quick experimentation: register accounts, paste payloads, toggle redundancy, and view responses.
+
+Examples & Extensions
+---------------------
+- `examples/advanced_python_example.py`, `dynamic_dag_example.py`, and integration demos show how to construct DAGs, apply adaptive rules, and wrap external frameworks.
+- Editor extensions provide “Enable Agent” commands that inject `tygent.install()` scaffolding into open files. Build with `npm install && npm run compile` inside each extension folder.
+
+Testing Strategy
+----------------
+- Core runtime coverage lives in `tests/*.py` (DAG operations, scheduler hooks, acceleration wrappers, adaptive executor, multi-agent coordination, service bridge, integration adapters).
+- Benchmarks (`tests/benchmarks/`) compare sequential vs accelerated execution—useful for regression tracking.
+- When modifying tyapi, run `pytest tyapi/tests -q` in addition to the top-level suite.
+
+Development Guardrails
+----------------------
+- Maintain deterministic ordering in DAG edge storage (`edges`, `edge_mappings`) to satisfy tests.
+- Preserve hook signatures and invocation timing in `Scheduler`; third-party clients rely on the `before_node/after_node/on_error` pattern.
+- Adaptive rewrite rules should leave the DAG acyclic; guard against cycles when injecting new nodes.
+- Service payload validation (`ServicePlanBuilder.build`) raises descriptive `ValueError`s—mirror that style for new validation paths.
+- Optional dependencies (Google ADK, Claude Code, Gemini CLI, OpenAI) must remain optional—wrap imports in try/except and skip integration when absent.
+
+Reference Commands
+------------------
+- Install dev deps: `pip install -e .[dev]`
+- Format: `black .` && `isort .`
+- Test (core): `pytest -q`
+- Test (tyapi only): `pytest tyapi/tests -q`
+- Run service: `python -m tyapi.service.cli serve --port 8080`
+- Register account: `python -m tyapi.service.cli register --name "Acme" --email "ops@example.com"`
+
+Additional Resources
+--------------------
+- README.md contains a rich feature tour, sample code for accelerating plans, building DAGs, adaptive execution, multi-agent coordination, planner adapters, and service bridge usage.
+- CHANGELOG.md tracks release highlights (if updating public APIs, document them here).
+- LICENSE notes the CC BY-NC 4.0 terms.
