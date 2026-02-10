@@ -7,6 +7,7 @@ const DEFAULT_MODULES = [
     'tygent.integrations.microsoft_ai',
     'tygent.integrations.salesforce',
     'tygent.integrations.claude_code',
+    'tygent.integrations.claude_code_cli',
     'tygent.integrations.gemini_cli',
     'tygent.integrations.openai_codex',
 ];

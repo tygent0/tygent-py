@@ -1,6 +1,7 @@
 import asyncio
 
 from tygent.integrations.claude_code import ClaudeCodePlanAdapter
+from tygent.integrations.claude_code_cli import ClaudeCodeCLIPlanAdapter
 from tygent.integrations.gemini_cli import GeminiCLIPlanAdapter
 from tygent.integrations.openai_codex import OpenAICodexPlanAdapter
 from tygent.service_bridge import DEFAULT_LLM_RUNTIME, execute_service_plan
@@ -113,6 +114,59 @@ def test_gemini_cli_adapter_executes_plan():
     assert len(calls) == 2
     assert calls[0]["metadata"]["provider"] == "gemini-cli-runtime"
     assert calls[1]["inputs"]["collect"]["result"]["text"].startswith("COLLECT")
+
+
+def test_claude_code_cli_adapter_executes_plan():
+    calls = []
+
+    DEFAULT_LLM_RUNTIME.register(
+        "claude-code-cli-runtime",
+        lambda prompt, metadata, inputs: _mock_runtime(
+            prompt, metadata, inputs, sink=calls
+        ),
+    )
+
+    payload = {
+        "plan": {
+            "session_id": "claude-cli-session",
+            "tasks": [
+                {
+                    "id": "draft",
+                    "instruction": "Draft changes for {topic}",
+                    "metadata": {
+                        "provider": "claude-code-cli-runtime",
+                        "is_critical": "true",
+                    },
+                    "links": ["https://cli.docs"],
+                },
+                {
+                    "id": "apply",
+                    "instruction": "Apply using {draft[result][text]}",
+                    "requires": ["draft"],
+                    "provider": "claude-code-cli-runtime",
+                    "token_estimate": 40,
+                },
+            ],
+            "prefetch": {"links": ["https://cli.docs"]},
+        }
+    }
+
+    adapter = ClaudeCodeCLIPlanAdapter(payload)
+    service_plan = adapter.to_service_plan()
+
+    assert service_plan.prefetch_links == ["https://cli.docs"]
+    steps = service_plan.plan["steps"]
+    assert steps[0]["metadata"]["framework"] == "claude_code_cli"
+    assert steps[0]["metadata"]["provider"] == "claude-code-cli-runtime"
+    assert steps[0]["critical"] is True
+    assert steps[1]["token_cost"] == 40
+
+    result = asyncio.run(execute_service_plan(service_plan, {"topic": "build cache"}))
+
+    assert {"draft", "apply"}.issubset(result["results"].keys())
+    assert len(calls) == 2
+    assert calls[0]["inputs"]["prefetch"]["https://cli.docs"] == "prefetched"
+    assert calls[1]["inputs"]["draft"]["result"]["text"].startswith("DRAFT")
 
 
 def test_openai_codex_adapter_executes_plan():
